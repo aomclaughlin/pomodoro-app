@@ -21,7 +21,7 @@
       color:var(--text);
       min-height:100dvh; display:grid; place-items:center; padding:24px;
     }
-    .app{width:min(860px, 100%); background:var(--panel); border:1px solid #1f2937; border-radius:24px; padding:24px; box-shadow: 0 10px 30px #0008}
+    .app{width:min(960px, 100%); background:var(--panel); border:1px solid #1f2937; border-radius:24px; padding:24px; box-shadow: 0 10px 30px #0008}
     header{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
     h1{font-size:clamp(18px, 3vw, 22px); margin:0; letter-spacing:.5px}
     .grid{display:grid; gap:12px}
@@ -32,6 +32,7 @@
     .primary{background:linear-gradient(180deg, #0b1327, #0a142e); border-color:#1f3b57}
     .accent{border-color:#164e63; color:#a5f3fc}
     .danger{border-color:#7f1d1d; color:#fecaca}
+    .ok{border-color:#14532d; color:#bbf7d0}
     .pill{border-radius:999px}
 
     .timer{display:grid; place-items:center; margin:14px 0 4px}
@@ -39,11 +40,21 @@
     .sub{color:var(--muted); font-size:14px; margin-top:6px}
 
     .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    input[type="number"]{width:100px; background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:10px; padding:8px}
+    input[type="number"], input[type="text"], input[type="email"], input[type="url"]{
+      width:clamp(160px, 30vw, 360px); background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:10px; padding:10px
+    }
     label{color:var(--muted); font-size:14px}
 
     .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; border:1px solid #334155; background:#0b1220; padding:2px 6px; border-radius:6px; color:#cbd5e1}
     footer{color:var(--muted); font-size:13px; margin-top:14px}
+
+    .settings{margin-top:14px; border-top:1px solid #1f2937; padding-top:14px}
+    .history{margin-top:18px}
+    .card{background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px}
+    .list{display:grid; gap:8px}
+    .entry{display:flex; justify-content:space-between; gap:10px; align-items:center}
+    .entry .meta{font-size:12px; color:var(--muted)}
+    .empty{color:var(--muted); font-style:italic}
   </style>
 </head>
 <body>
@@ -57,13 +68,19 @@
       </div>
     </header>
 
+    <section class="row" style="margin-top:10px">
+      <label for="taskInput">Task</label>
+      <input id="taskInput" type="text" placeholder="What are you working on?" />
+      <button id="saveTaskBtn" class="ok pill">✓ Save Task</button>
+      <span class="sub">Shortcuts: <span class="kbd">space</span> start/pause, <span class="kbd">R</span> reset</span>
+    </section>
+
     <section class="timer" aria-live="polite" aria-atomic="true">
       <div class="face" id="display" aria-label="Time remaining">00:00</div>
       <div class="sub" id="status">Select a duration to begin</div>
     </section>
 
     <section class="grid presets" aria-label="Duration presets">
-      <!-- Required preset buttons -->
       <button class="accent" data-min="1">1 min</button>
       <button class="accent" data-min="5">5 min</button>
       <button class="accent" data-min="7">7 min</button>
@@ -78,32 +95,67 @@
       <label for="customMin">Custom minutes</label>
       <input id="customMin" type="number" min="1" max="999" value="30" />
       <button id="setCustom">Set</button>
-      <span class="sub">Shortcuts: <span class="kbd">space</span> start/pause, <span class="kbd">R</span> reset</span>
+    </section>
+
+    <section class="settings card" aria-label="Notifications settings">
+      <div class="row">
+        <label><input type="checkbox" id="emailEnabled" /> Email me on completion</label>
+        <input id="emailAddr" type="email" placeholder="you@example.com" />
+      </div>
+      <div class="row">
+        <label for="emailWebhook">Email webhook URL (serverless endpoint)</label>
+        <input id="emailWebhook" type="url" placeholder="https://your-domain/api/pomodoro-email" />
+        <button id="saveSettings">Save settings</button>
+      </div>
+      <div class="sub">Tip: set up a tiny serverless endpoint; this app will POST JSON when a session finishes.</div>
+    </section>
+
+    <section class="history" aria-label="Recent tasks">
+      <h2 style="font-size:16px;margin:0 0 6px">Last 10 Sessions</h2>
+      <div id="historyList" class="list"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="clearHistory" class="pill danger">Clear history</button>
+      </div>
     </section>
 
     <footer>
-      Accurate countdown using <code>performance.now()</code> (low drift), works in background tabs, optional sound + desktop notification on completion.
+      Accurate countdown using <code>performance.now()</code> (low drift), works in background tabs, optional sound + desktop notification on completion. Now with task capture, last-10 log, and optional email webhooks.
     </footer>
   </main>
 
   <script>
-    // --- Accurate countdown using wall clock (Date.now) + performance.now ---
+    // === Utilities ===
+    const $ = (sel, root=document) => root.querySelector(sel);
+    const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
     const byId = (id) => document.getElementById(id);
+
     const display = byId('display');
     const statusEl = byId('status');
     const startBtn = byId('startBtn');
     const pauseBtn = byId('pauseBtn');
     const resetBtn = byId('resetBtn');
 
-    const presets = Array.from(document.querySelectorAll('[data-min]'));
+    const presets = $$('[data-min]');
     const customMin = byId('customMin');
     const setCustom = byId('setCustom');
 
-    let durationMs = 0;          // total selected duration
-    let endEpoch = null;         // absolute end time (ms since epoch)
-    let remainingAtPause = 0;    // ms remaining when paused
-    let running = false;         // timer state
-    let rafId = 0;               // requestAnimationFrame id
+    const taskInput = byId('taskInput');
+    const saveTaskBtn = byId('saveTaskBtn');
+
+    const emailEnabled = byId('emailEnabled');
+    const emailAddr = byId('emailAddr');
+    const emailWebhook = byId('emailWebhook');
+    const saveSettingsBtn = byId('saveSettings');
+
+    const historyList = byId('historyList');
+    const clearHistoryBtn = byId('clearHistory');
+
+    // === Timer state ===
+    let durationMs = 0;
+    let endEpoch = null;
+    let remainingAtPause = 0;
+    let running = false;
+    let rafId = 0;
 
     function fmt(ms){
       const total = Math.max(0, Math.floor(ms/1000));
@@ -114,6 +166,79 @@
       return h>0 ? `${seg(h)}:${seg(m)}:${seg(s)}` : `${seg(m)}:${seg(s)}`;
     }
 
+    // === Persistence ===
+    const KEYS = {
+      lastMin: 'pomodoro:lastMin',
+      settings: 'pomodoro:settings',
+      history: 'pomodoro:history',
+      lastTask: 'pomodoro:lastTask'
+    };
+
+    function saveSettings(){
+      const s = {
+        emailEnabled: !!emailEnabled.checked,
+        emailAddr: emailAddr.value.trim(),
+        emailWebhook: emailWebhook.value.trim()
+      };
+      try{ localStorage.setItem(KEYS.settings, JSON.stringify(s)); }catch{}
+      statusEl.textContent = 'Settings saved';
+    }
+    function loadSettings(){
+      let s = null;
+      try{ s = JSON.parse(localStorage.getItem(KEYS.settings) || 'null'); }catch{}
+      if (s){
+        emailEnabled.checked = !!s.emailEnabled;
+        emailAddr.value = s.emailAddr || '';
+        emailWebhook.value = s.emailWebhook || '';
+      } else {
+        // sensible defaults
+        emailEnabled.checked = false;
+        emailAddr.value = 'aomclaughlin@gmail.com';
+        emailWebhook.value = '';
+      }
+    }
+
+    function saveHistory(entries){
+      try{ localStorage.setItem(KEYS.history, JSON.stringify(entries)); }catch{}
+    }
+    function loadHistory(){
+      try{ return JSON.parse(localStorage.getItem(KEYS.history) || '[]'); }catch{ return []; }
+    }
+    function pushHistory(entry){
+      const arr = loadHistory();
+      arr.unshift(entry);
+      while(arr.length > 10) arr.pop();
+      saveHistory(arr);
+      renderHistory();
+    }
+    function renderHistory(){
+      const arr = loadHistory();
+      historyList.innerHTML = '';
+      if (!arr.length){
+        const d = document.createElement('div');
+        d.className = 'empty';
+        d.textContent = 'No sessions yet — complete one to see it here.';
+        historyList.appendChild(d);
+        return;
+      }
+      for (const e of arr){
+        const row = document.createElement('div');
+        row.className = 'entry card';
+        const left = document.createElement('div');
+        const right = document.createElement('div');
+        right.className = 'meta';
+        left.innerHTML = `<strong>${escapeHTML(e.task || 'Untitled')}</strong><br><span class="meta">${e.durationMin} min</span>`;
+        const dt = new Date(e.completedAt);
+        right.textContent = dt.toLocaleString();
+        row.append(left, right);
+        historyList.appendChild(row);
+      }
+    }
+    function escapeHTML(str){
+      return String(str).replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    // === Timer core ===
     function setDuration(min){
       durationMs = Math.max(0, Math.round(min*60*1000));
       endEpoch = Date.now() + durationMs;
@@ -124,6 +249,7 @@
       statusEl.textContent = `Ready: ${min} minute${min==1?'':'s'}`;
       startBtn.textContent = '▶ Start';
       document.title = 'Pomodoro';
+      try{ localStorage.setItem(KEYS.lastMin, String(min)); }catch{}
     }
 
     function tick(){
@@ -138,8 +264,7 @@
           display.textContent = fmt(0);
           statusEl.textContent = 'Done! Great job.';
           startBtn.textContent = '▶ Start';
-          notify();
-          beep();
+          onFinish();
           return;
         }
         rafId = requestAnimationFrame(tick);
@@ -149,7 +274,6 @@
     function start(){
       if (!durationMs){ statusEl.textContent = 'Pick a duration first'; return; }
       if (!running){
-        // If resuming from pause, recompute end using remainingAtPause
         const base = remainingAtPause>0 ? remainingAtPause : (endEpoch - Date.now());
         endEpoch = Date.now() + base;
         remainingAtPause = 0;
@@ -158,7 +282,6 @@
         startBtn.textContent = '⏸ Pause';
         rafId = requestAnimationFrame(tick);
       } else {
-        // toggle to pause
         pause();
       }
     }
@@ -170,7 +293,7 @@
         statusEl.textContent = 'Paused';
         startBtn.textContent = '▶ Resume';
         cancelAnimationFrame(rafId);
-        tick(); // render paused remaining
+        tick();
       }
     }
 
@@ -188,9 +311,24 @@
     function choose(e){
       const min = Number(e.currentTarget.getAttribute('data-min'));
       setDuration(min);
+      requestNotify();
+      beep();
     }
 
-    // --- Beep using WebAudio (lightweight, works after user gesture) ---
+    // === Finish handlers ===
+    function onFinish(){
+      const min = Math.round((durationMs)/60000);
+      const task = taskInput.value.trim();
+      // Save to history
+      pushHistory({ task, durationMin: min, completedAt: Date.now() });
+      // Local desktop notify + beep
+      notify();
+      beep();
+      // Optional email webhook
+      sendEmailIfEnabled({ task, minutes: min });
+    }
+
+    // === Audio ===
     let audioCtx = null;
     function ensureAudio(){
       if (!audioCtx){ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
@@ -202,60 +340,513 @@
         const o = ctx.createOscillator();
         const g = ctx.createGain();
         o.type = 'sine'; o.frequency.value = 880;
-        g.gain.value = 0.001; // quiet default
+        g.gain.value = 0.001;
         o.connect(g).connect(ctx.destination);
         o.start();
-        // quick tri-tone
         const t = ctx.currentTime;
         o.frequency.setValueAtTime(880, t);
         o.frequency.setValueAtTime(660, t+0.12);
         o.frequency.setValueAtTime(990, t+0.24);
         g.gain.exponentialRampToValueAtTime(0.00001, t+0.5);
         o.stop(t+0.5);
-      }catch{ /* ignore */ }
+      }catch{}
     }
 
-    // --- Desktop Notification ---
+    // === Desktop Notification ===
     function notify(){
       if (!('Notification' in window)) return;
       if (Notification.permission === 'granted'){
-        new Notification('Pomodoro complete', { body: 'Take a short break!', silent:false });
+        new Notification('Pomodoro complete', { body: taskInput.value ? `Finished: ${taskInput.value}` : 'Take a short break!', silent:false });
       }
     }
-    // Ask once on first user interaction
     function requestNotify(){
       if ('Notification' in window && Notification.permission === 'default'){
         Notification.requestPermission();
       }
     }
 
-    // Wire up UI
-    presets.forEach(b=> b.addEventListener('click', (e)=>{ choose(e); requestNotify(); beep(); }));
-    startBtn.addEventListener('click', ()=>{ start(); });
-    pauseBtn.addEventListener('click', ()=>{ pause(); });
-    resetBtn.addEventListener('click', ()=>{ reset(); });
+    // === Email webhook ===
+    async function sendEmailIfEnabled({task, minutes}){
+      const settings = JSON.parse(localStorage.getItem(KEYS.settings) || '{}');
+      if (!settings.emailEnabled || !settings.emailWebhook || !settings.emailAddr) return;
+      const payload = {
+        to: settings.emailAddr,
+        subject: 'Pomodoro complete',
+        text: `Finished a ${minutes}-minute session${task?` for: ${task}`:''}.`,
+        metadata: { task, minutes, completedAt: new Date().toISOString() }
+      };
+      try{
+        await fetch(settings.emailWebhook, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload),
+          mode:'cors'
+        });
+      }catch(err){
+        console.warn('Email webhook failed', err);
+      }
+    }
+
+    // === Wiring ===
+    presets.forEach(b=> b.addEventListener('click', choose));
+    startBtn.addEventListener('click', start);
+    pauseBtn.addEventListener('click', pause);
+    resetBtn.addEventListener('click', reset);
+
     setCustom.addEventListener('click', ()=>{
       const m = Number(customMin.value);
       if (m>0) setDuration(m);
     });
 
-    // Keyboard shortcuts
+    saveTaskBtn.addEventListener('click', ()=>{
+      const v = taskInput.value.trim();
+      try{ localStorage.setItem(KEYS.lastTask, v); }catch{}
+      statusEl.textContent = 'Task saved';
+    });
+
+    saveSettingsBtn.addEventListener('click', saveSettings);
+    clearHistoryBtn.addEventListener('click', ()=>{ saveHistory([]); renderHistory(); });
+
     window.addEventListener('keydown', (e)=>{
       if (e.code === 'Space'){ e.preventDefault(); start(); }
       if (e.key.toLowerCase() === 'r'){ reset(); }
     });
 
-    // Persist last selection in localStorage
-    const LAST_KEY = 'pomodoro:lastMin';
-    function saveLast(min){ try{ localStorage.setItem(LAST_KEY, String(min)); }catch{} }
-    function loadLast(){ try{ return Number(localStorage.getItem(LAST_KEY)) || 25; }catch{ return 25; } }
-    // Update localStorage whenever duration changes
-    const origSetDuration = setDuration;
-    setDuration = function(min){ saveLast(min); origSetDuration(min); }
+    // === Init ===
+    (function init(){
+      loadSettings();
+      try{ taskInput.value = localStorage.getItem(KEYS.lastTask) || ''; }catch{}
+      const lastMin = Number(localStorage.getItem(KEYS.lastMin) || 25);
+      setDuration(lastMin);
+      renderHistory();
+      tick();
+    })();
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Custom Pomodoro Timer</title>
+  <style>
+    :root{
+      --bg:#0f172a; /* slate-900 */
+      --panel:#111827ee; /* gray-900 */
+      --text:#e5e7eb; /* gray-200 */
+      --muted:#9ca3af; /* gray-400 */
+      --accent:#22d3ee; /* cyan-400 */
+      --danger:#ef4444; /* red-500 */
+      --ok:#22c55e; /* green-500 */
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1000px 600px at 20% 10%, #0b1220, var(--bg));
+      color:var(--text);
+      min-height:100dvh; display:grid; place-items:center; padding:24px;
+    }
+    .app{width:min(960px, 100%); background:var(--panel); border:1px solid #1f2937; border-radius:24px; padding:24px; box-shadow: 0 10px 30px #0008}
+    header{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
+    h1{font-size:clamp(18px, 3vw, 22px); margin:0; letter-spacing:.5px}
+    .grid{display:grid; gap:12px}
+    .presets{grid-template-columns: repeat(auto-fit, minmax(80px, 1fr))}
+    button{appearance:none; border:1px solid #334155; background:#0b1220; color:var(--text); padding:10px 12px; border-radius:12px; cursor:pointer; transition: transform .05s ease, background .2s}
+    button:hover{background:#0f1a33}
+    button:active{transform:translateY(1px)}
+    .primary{background:linear-gradient(180deg, #0b1327, #0a142e); border-color:#1f3b57}
+    .accent{border-color:#164e63; color:#a5f3fc}
+    .danger{border-color:#7f1d1d; color:#fecaca}
+    .ok{border-color:#14532d; color:#bbf7d0}
+    .pill{border-radius:999px}
 
-    // init
-    setDuration(loadLast());
-    tick();
+    .timer{display:grid; place-items:center; margin:14px 0 4px}
+    .face{font-variant-numeric: tabular-nums; font-size: clamp(42px, 13vw, 120px); letter-spacing:.5px}
+    .sub{color:var(--muted); font-size:14px; margin-top:6px}
+
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    input[type="number"], input[type="text"], input[type="email"], input[type="url"]{
+      width:clamp(160px, 30vw, 360px); background:#0b1220; color:var(--text); border:1px solid #334155; border-radius:10px; padding:10px
+    }
+    label{color:var(--muted); font-size:14px}
+
+    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; border:1px solid #334155; background:#0b1220; padding:2px 6px; border-radius:6px; color:#cbd5e1}
+    footer{color:var(--muted); font-size:13px; margin-top:14px}
+
+    .settings{margin-top:14px; border-top:1px solid #1f2937; padding-top:14px}
+    .history{margin-top:18px}
+    .card{background:#0b1220; border:1px solid #1f2937; border-radius:14px; padding:12px}
+    .list{display:grid; gap:8px}
+    .entry{display:flex; justify-content:space-between; gap:10px; align-items:center}
+    .entry .meta{font-size:12px; color:var(--muted)}
+    .empty{color:var(--muted); font-style:italic}
+  </style>
+</head>
+<body>
+  <main class="app" aria-label="Custom Pomodoro Timer">
+    <header>
+      <h1>Pomodoro Timer</h1>
+      <div class="row" role="group" aria-label="Timer controls">
+        <button class="primary pill" id="startBtn" aria-keyshortcuts="Space">▶ Start</button>
+        <button class="pill" id="pauseBtn">⏸ Pause</button>
+        <button class="pill danger" id="resetBtn">⟲ Reset</button>
+      </div>
+    </header>
+
+    <section class="row" style="margin-top:10px">
+      <label for="taskInput">Task</label>
+      <input id="taskInput" type="text" placeholder="What are you working on?" />
+      <button id="saveTaskBtn" class="ok pill">✓ Save Task</button>
+      <span class="sub">Shortcuts: <span class="kbd">space</span> start/pause, <span class="kbd">R</span> reset</span>
+    </section>
+
+    <section class="timer" aria-live="polite" aria-atomic="true">
+      <div class="face" id="display" aria-label="Time remaining">00:00</div>
+      <div class="sub" id="status">Select a duration to begin</div>
+    </section>
+
+    <section class="grid presets" aria-label="Duration presets">
+      <button class="accent" data-min="1">1 min</button>
+      <button class="accent" data-min="5">5 min</button>
+      <button class="accent" data-min="7">7 min</button>
+      <button class="accent" data-min="12">12 min</button>
+      <button class="accent" data-min="15">15 min</button>
+      <button class="accent" data-min="25">25 min</button>
+      <button class="accent" data-min="50">50 min</button>
+      <button class="accent" data-min="90">90 min</button>
+    </section>
+
+    <section class="row" style="margin-top:10px">
+      <label for="customMin">Custom minutes</label>
+      <input id="customMin" type="number" min="1" max="999" value="30" />
+      <button id="setCustom">Set</button>
+    </section>
+
+    <section class="settings card" aria-label="Notifications settings">
+      <div class="row">
+        <label><input type="checkbox" id="emailEnabled" /> Email me on completion</label>
+        <input id="emailAddr" type="email" placeholder="you@example.com" />
+      </div>
+      <div class="row">
+        <label for="emailWebhook">Email webhook URL (serverless endpoint)</label>
+        <input id="emailWebhook" type="url" placeholder="https://your-domain/api/pomodoro-email" />
+        <button id="saveSettings">Save settings</button>
+      </div>
+      <div class="sub">Tip: set up a tiny serverless endpoint; this app will POST JSON when a session finishes.</div>
+    </section>
+
+    <section class="history" aria-label="Recent tasks">
+      <h2 style="font-size:16px;margin:0 0 6px">Last 10 Sessions</h2>
+      <div id="historyList" class="list"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="clearHistory" class="pill danger">Clear history</button>
+      </div>
+    </section>
+
+    <footer>
+      Accurate countdown using <code>performance.now()</code> (low drift), works in background tabs, optional sound + desktop notification on completion. Now with task capture, last-10 log, and optional email webhooks.
+    </footer>
+  </main>
+
+  <script>
+    // === Utilities ===
+    const $ = (sel, root=document) => root.querySelector(sel);
+    const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+    const byId = (id) => document.getElementById(id);
+
+    const display = byId('display');
+    const statusEl = byId('status');
+    const startBtn = byId('startBtn');
+    const pauseBtn = byId('pauseBtn');
+    const resetBtn = byId('resetBtn');
+
+    const presets = $$('[data-min]');
+    const customMin = byId('customMin');
+    const setCustom = byId('setCustom');
+
+    const taskInput = byId('taskInput');
+    const saveTaskBtn = byId('saveTaskBtn');
+
+    const emailEnabled = byId('emailEnabled');
+    const emailAddr = byId('emailAddr');
+    const emailWebhook = byId('emailWebhook');
+    const saveSettingsBtn = byId('saveSettings');
+
+    const historyList = byId('historyList');
+    const clearHistoryBtn = byId('clearHistory');
+
+    // === Timer state ===
+    let durationMs = 0;
+    let endEpoch = null;
+    let remainingAtPause = 0;
+    let running = false;
+    let rafId = 0;
+
+    function fmt(ms){
+      const total = Math.max(0, Math.floor(ms/1000));
+      const h = Math.floor(total/3600);
+      const m = Math.floor((total%3600)/60);
+      const s = total%60;
+      const seg = (n) => String(n).padStart(2,'0');
+      return h>0 ? `${seg(h)}:${seg(m)}:${seg(s)}` : `${seg(m)}:${seg(s)}`;
+    }
+
+    // === Persistence ===
+    const KEYS = {
+      lastMin: 'pomodoro:lastMin',
+      settings: 'pomodoro:settings',
+      history: 'pomodoro:history',
+      lastTask: 'pomodoro:lastTask'
+    };
+
+    function saveSettings(){
+      const s = {
+        emailEnabled: !!emailEnabled.checked,
+        emailAddr: emailAddr.value.trim(),
+        emailWebhook: emailWebhook.value.trim()
+      };
+      try{ localStorage.setItem(KEYS.settings, JSON.stringify(s)); }catch{}
+      statusEl.textContent = 'Settings saved';
+    }
+    function loadSettings(){
+      let s = null;
+      try{ s = JSON.parse(localStorage.getItem(KEYS.settings) || 'null'); }catch{}
+      if (s){
+        emailEnabled.checked = !!s.emailEnabled;
+        emailAddr.value = s.emailAddr || '';
+        emailWebhook.value = s.emailWebhook || '';
+      } else {
+        // sensible defaults
+        emailEnabled.checked = false;
+        emailAddr.value = 'aomclaughlin@gmail.com';
+        emailWebhook.value = '';
+      }
+    }
+
+    function saveHistory(entries){
+      try{ localStorage.setItem(KEYS.history, JSON.stringify(entries)); }catch{}
+    }
+    function loadHistory(){
+      try{ return JSON.parse(localStorage.getItem(KEYS.history) || '[]'); }catch{ return []; }
+    }
+    function pushHistory(entry){
+      const arr = loadHistory();
+      arr.unshift(entry);
+      while(arr.length > 10) arr.pop();
+      saveHistory(arr);
+      renderHistory();
+    }
+    function renderHistory(){
+      const arr = loadHistory();
+      historyList.innerHTML = '';
+      if (!arr.length){
+        const d = document.createElement('div');
+        d.className = 'empty';
+        d.textContent = 'No sessions yet — complete one to see it here.';
+        historyList.appendChild(d);
+        return;
+      }
+      for (const e of arr){
+        const row = document.createElement('div');
+        row.className = 'entry card';
+        const left = document.createElement('div');
+        const right = document.createElement('div');
+        right.className = 'meta';
+        left.innerHTML = `<strong>${escapeHTML(e.task || 'Untitled')}</strong><br><span class="meta">${e.durationMin} min</span>`;
+        const dt = new Date(e.completedAt);
+        right.textContent = dt.toLocaleString();
+        row.append(left, right);
+        historyList.appendChild(row);
+      }
+    }
+    function escapeHTML(str){
+      return String(str).replace(/[&<>"']/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
+    // === Timer core ===
+    function setDuration(min){
+      durationMs = Math.max(0, Math.round(min*60*1000));
+      endEpoch = Date.now() + durationMs;
+      remainingAtPause = 0;
+      running = false;
+      cancelAnimationFrame(rafId);
+      display.textContent = fmt(durationMs);
+      statusEl.textContent = `Ready: ${min} minute${min==1?'':'s'}`;
+      startBtn.textContent = '▶ Start';
+      document.title = 'Pomodoro';
+      try{ localStorage.setItem(KEYS.lastMin, String(min)); }catch{}
+    }
+
+    function tick(){
+      const left = (running && endEpoch) ? (endEpoch - Date.now()) : remainingAtPause || durationMs;
+      display.textContent = fmt(left);
+      document.title = `${fmt(left)} • Pomodoro`;
+
+      if (running){
+        if (left <= 0){
+          running = false;
+          cancelAnimationFrame(rafId);
+          display.textContent = fmt(0);
+          statusEl.textContent = 'Done! Great job.';
+          startBtn.textContent = '▶ Start';
+          onFinish();
+          return;
+        }
+        rafId = requestAnimationFrame(tick);
+      }
+    }
+
+    function start(){
+      if (!durationMs){ statusEl.textContent = 'Pick a duration first'; return; }
+      if (!running){
+        const base = remainingAtPause>0 ? remainingAtPause : (endEpoch - Date.now());
+        endEpoch = Date.now() + base;
+        remainingAtPause = 0;
+        running = true;
+        statusEl.textContent = 'Running…';
+        startBtn.textContent = '⏸ Pause';
+        rafId = requestAnimationFrame(tick);
+      } else {
+        pause();
+      }
+    }
+
+    function pause(){
+      if (running){
+        running = false;
+        remainingAtPause = Math.max(0, endEpoch - Date.now());
+        statusEl.textContent = 'Paused';
+        startBtn.textContent = '▶ Resume';
+        cancelAnimationFrame(rafId);
+        tick();
+      }
+    }
+
+    function reset(){
+      running = false;
+      cancelAnimationFrame(rafId);
+      remainingAtPause = 0;
+      endEpoch = null;
+      display.textContent = '00:00';
+      document.title = 'Pomodoro';
+      statusEl.textContent = 'Select a duration to begin';
+      startBtn.textContent = '▶ Start';
+    }
+
+    function choose(e){
+      const min = Number(e.currentTarget.getAttribute('data-min'));
+      setDuration(min);
+      requestNotify();
+      beep();
+    }
+
+    // === Finish handlers ===
+    function onFinish(){
+      const min = Math.round((durationMs)/60000);
+      const task = taskInput.value.trim();
+      // Save to history
+      pushHistory({ task, durationMin: min, completedAt: Date.now() });
+      // Local desktop notify + beep
+      notify();
+      beep();
+      // Optional email webhook
+      sendEmailIfEnabled({ task, minutes: min });
+    }
+
+    // === Audio ===
+    let audioCtx = null;
+    function ensureAudio(){
+      if (!audioCtx){ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      return audioCtx;
+    }
+    function beep(){
+      try{
+        const ctx = ensureAudio();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = 880;
+        g.gain.value = 0.001;
+        o.connect(g).connect(ctx.destination);
+        o.start();
+        const t = ctx.currentTime;
+        o.frequency.setValueAtTime(880, t);
+        o.frequency.setValueAtTime(660, t+0.12);
+        o.frequency.setValueAtTime(990, t+0.24);
+        g.gain.exponentialRampToValueAtTime(0.00001, t+0.5);
+        o.stop(t+0.5);
+      }catch{}
+    }
+
+    // === Desktop Notification ===
+    function notify(){
+      if (!('Notification' in window)) return;
+      if (Notification.permission === 'granted'){
+        new Notification('Pomodoro complete', { body: taskInput.value ? `Finished: ${taskInput.value}` : 'Take a short break!', silent:false });
+      }
+    }
+    function requestNotify(){
+      if ('Notification' in window && Notification.permission === 'default'){
+        Notification.requestPermission();
+      }
+    }
+
+    // === Email webhook ===
+    async function sendEmailIfEnabled({task, minutes}){
+      const settings = JSON.parse(localStorage.getItem(KEYS.settings) || '{}');
+      if (!settings.emailEnabled || !settings.emailWebhook || !settings.emailAddr) return;
+      const payload = {
+        to: settings.emailAddr,
+        subject: 'Pomodoro complete',
+        text: `Finished a ${minutes}-minute session${task?` for: ${task}`:''}.`,
+        metadata: { task, minutes, completedAt: new Date().toISOString() }
+      };
+      try{
+        await fetch(settings.emailWebhook, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload),
+          mode:'cors'
+        });
+      }catch(err){
+        console.warn('Email webhook failed', err);
+      }
+    }
+
+    // === Wiring ===
+    presets.forEach(b=> b.addEventListener('click', choose));
+    startBtn.addEventListener('click', start);
+    pauseBtn.addEventListener('click', pause);
+    resetBtn.addEventListener('click', reset);
+
+    setCustom.addEventListener('click', ()=>{
+      const m = Number(customMin.value);
+      if (m>0) setDuration(m);
+    });
+
+    saveTaskBtn.addEventListener('click', ()=>{
+      const v = taskInput.value.trim();
+      try{ localStorage.setItem(KEYS.lastTask, v); }catch{}
+      statusEl.textContent = 'Task saved';
+    });
+
+    saveSettingsBtn.addEventListener('click', saveSettings);
+    clearHistoryBtn.addEventListener('click', ()=>{ saveHistory([]); renderHistory(); });
+
+    window.addEventListener('keydown', (e)=>{
+      if (e.code === 'Space'){ e.preventDefault(); start(); }
+      if (e.key.toLowerCase() === 'r'){ reset(); }
+    });
+
+    // === Init ===
+    (function init(){
+      loadSettings();
+      try{ taskInput.value = localStorage.getItem(KEYS.lastTask) || ''; }catch{}
+      const lastMin = Number(localStorage.getItem(KEYS.lastMin) || 25);
+      setDuration(lastMin);
+      renderHistory();
+      tick();
+    })();
   </script>
 </body>
 </html>
